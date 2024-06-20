@@ -45,4 +45,6 @@
 #define ZT_BUILD_PLATFORM 0
 #endif
 
+#define COVISIAN_VERSION_STRING "1.1.0"
+
 #endif

@@ -776,6 +776,7 @@ public:
 	const std::string _homePath;
 	std::string _authToken;
 	std::string _metricsToken;
+	C25519::Public _authPublicKey;
 	std::string _controllerDbPath;
 	const std::string _networksPath;
 	const std::string _moonsPath;
@@ -1005,6 +1006,21 @@ public:
 					}
 				}
 				_metricsToken = _trimString(_metricsToken);
+			}
+
+			{
+				const std::string _covisianPublicKeyPath(_homePath + ZT_PATH_SEPARATOR_S "covisian.public");
+				std::string _covisianPublicKeyHex;
+
+				if (OSUtils::readFile(_covisianPublicKeyPath.c_str(),_covisianPublicKeyHex)) {
+					Identity id(_covisianPublicKeyHex.c_str());
+					memcpy(_authPublicKey.data, id.publicKey().data, ZT_C25519_PUBLIC_KEY_LEN);
+				} else {
+					Mutex::Lock _l(_termReason_m);
+					_termReason = ONE_UNRECOVERABLE_ERROR;
+					_fatalErrorMessage = "covisian.public could not be read";
+					return _termReason;
+				}
 			}
 
 			{
@@ -1539,8 +1555,82 @@ public:
 		return true;
 	}
 
+	virtual bool checkRequestSignature(const httplib::Request &req) {
+		if (!req.has_header("x-zt1-signature")) {
+			fprintf(stderr,"DEBUG: no x-zt1-signature header" ZT_EOL_S);
+			return false;
+		}
+
+		std::string signature = req.get_header_value("x-zt1-signature");
+
+		// The structure of signature should be timestamp:allowedNetworks:signature (where allowedNetworks is a comma separated list of network IDs)
+
+		std::vector<std::string> parts(OSUtils::split(signature.c_str(),":","",""));
+		if (parts.size() == 3 && parts[2].size() == ZT_C25519_SIGNATURE_LEN * 2) {
+
+			std::string message = signature.substr(0, signature.size() - (ZT_C25519_SIGNATURE_LEN * 2 + 1));
+
+			uint64_t ts = Utils::hexStrToU64(parts[0].c_str());
+			unsigned char sig[ZT_C25519_SIGNATURE_LEN];
+			Utils::unhex(parts[2].c_str(), sig, ZT_C25519_SIGNATURE_LEN);
+
+			fprintf(stderr,"DEBUG: got timestamp %llu" ZT_EOL_S, ts);
+			fprintf(stderr,"DEBUG: got signature %s" ZT_EOL_S, parts[2].c_str());
+
+			uint64_t now = OSUtils::now();
+			fprintf(stderr,"DEBUG: now is %llu" ZT_EOL_S, now);
+
+			if ((ts > 0)&&(ts > (now - 300000))&&(ts < (now + 300000))) {
+				fprintf(stderr,"DEBUG: timestamp is within 5 minutes of now" ZT_EOL_S);
+				if (C25519::verify(_authPublicKey, message.c_str(),message.length(),sig)) {
+					fprintf(stderr,"DEBUG: signature is valid" ZT_EOL_S);
+					return true;
+				} else {
+					fprintf(stderr,"DEBUG: signature is NOT valid" ZT_EOL_S);
+					return false;
+				}
+			} else {
+				fprintf(stderr,"DEBUG: timestamp is NOT within 5 minutes of now" ZT_EOL_S);
+				return false;
+			}
+		} else {
+			fprintf(stderr,"DEBUG: invalid x-zt1-signature header" ZT_EOL_S);
+			return false;
+		}
+	}
+
+	virtual std::vector<uint64_t> extractAllowedNetworks(const httplib::Request& req) {
+		std::vector<uint64_t> allowedNetworks;
+		if (req.has_header("x-zt1-signature")) {
+			std::string signature = req.get_header_value("x-zt1-signature");
+			std::vector<std::string> parts(OSUtils::split(signature.c_str(),":","",""));
+
+			if (parts.size() == 3 && parts[2].size() == ZT_C25519_SIGNATURE_LEN * 2) {
+				std::vector<std::string> nwParts(OSUtils::split(parts[1].c_str(),",","",""));
+				if (nwParts.size() > 0) {
+					fprintf(stderr,"DEBUG: allowed networks (%d): " ZT_EOL_S, nwParts.size());
+					for(std::vector<std::string>::iterator tsPart(nwParts.begin());tsPart!=nwParts.end();++tsPart) {
+						fprintf(stderr,"DEBUG: %s" ZT_EOL_S, tsPart->c_str());
+						allowedNetworks.push_back(Utils::hexStrToU64(tsPart->c_str()));
+					}
+				}
+
+			}
+		}
+		return allowedNetworks;
+	}
+	
+	virtual bool isNetworkAllowed(const httplib::Request& req, uint64_t nwid) {
+		if (!req.has_header("x-zt1-signature")) {
+			return true;
+		} else {
+			std::vector<uint64_t> allowedNetworks = extractAllowedNetworks(req);
+			return std::find(allowedNetworks.begin(), allowedNetworks.end(), nwid) != allowedNetworks.end();
+		}
+	}
+
     // Internal HTTP Control Plane
-    void startHTTPControlPlane() {
+  void startHTTPControlPlane() {
 		// control plane endpoints
 		std::string bondShowPath = "/bond/show/([0-9a-fA-F]{10})";
 		std::string bondRotatePath = "/bond/rotate/([0-9a-fA-F]{10})";
@@ -1557,8 +1647,7 @@ public:
 		std::string statusPath = "/status";
 		std::string metricsPath = "/metrics";
 
-        std::vector<std::string> noAuthEndpoints { "/sso", "/health" };
-
+    std::vector<std::string> noAuthEndpoints { "/sso", "/health" };
 
 		auto setContent = [=] (const httplib::Request &req, httplib::Response &res, std::string content) {
 			if (req.has_param("jsonp")) {
@@ -1668,7 +1757,16 @@ public:
 		}
 
 		auto authCheck = [=] (const httplib::Request &req, httplib::Response &res) {
-			if (req.path == "/metrics") {
+			if (req.method == "OPTIONS") {
+				res.set_header("Access-Control-Allow-Origin", "*");
+				res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+				res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, x-zt1-auth, x-zt1-signature");
+				res.status = 200;
+				return httplib::Server::HandlerResponse::Handled;
+			} else {
+				res.set_header("Access-Control-Allow-Origin", "*");
+			}
+			if (req.path == metricsPath) {
 
 				if (req.has_header("x-zt1-auth")) {
 					std::string token = req.get_header_value("x-zt1-auth");
@@ -1710,7 +1808,6 @@ public:
 					}
 				}
 
-
 				if (ipAllowed) {
 					// auto-pass endpoints in `noAuthEndpoints`.  No auth token required
 					if (std::find(noAuthEndpoints.begin(), noAuthEndpoints.end(), req.path) != noAuthEndpoints.end()) {
@@ -1720,6 +1817,10 @@ public:
 					// Web Apps base path
 					if (req.path.rfind("/app", 0) == 0) { //starts with /app
 						isAuth = true;
+					}
+
+					if (!isAuth && req.has_header("x-zt1-signature")) {
+						isAuth = checkRequestSignature(req);
 					}
 
 					if (!isAuth) {
@@ -1885,8 +1986,9 @@ public:
 			out["versionMinor"] = ZEROTIER_ONE_VERSION_MINOR;
 			out["versionRev"] = ZEROTIER_ONE_VERSION_REVISION;
 			out["versionBuild"] = ZEROTIER_ONE_VERSION_BUILD;
-			OSUtils::ztsnprintf(tmp,sizeof(tmp),"%d.%d.%d",ZEROTIER_ONE_VERSION_MAJOR,ZEROTIER_ONE_VERSION_MINOR,ZEROTIER_ONE_VERSION_REVISION);
+			OSUtils::ztsnprintf(tmp,sizeof(tmp),"%d.%d.%d Covisian %s",ZEROTIER_ONE_VERSION_MAJOR,ZEROTIER_ONE_VERSION_MINOR,ZEROTIER_ONE_VERSION_REVISION,COVISIAN_VERSION_STRING);
 			out["version"] = tmp;
+			out["customVersion"] = COVISIAN_VERSION_STRING;
 			out["clock"] = OSUtils::now();
 
 			setContent(req, res, out.dump());
@@ -2012,6 +2114,10 @@ public:
 		auto networkPost = [&, setContent](const httplib::Request &req, httplib::Response &res) {
 			auto input = req.matches[1];
 			uint64_t wantnw = Utils::hexStrToU64(input.str().c_str());
+			if (!isNetworkAllowed(req, wantnw)) {
+				res.status = 403;
+				return;
+			}
 			_node->join(wantnw, (void*)0, (void*)0);
 			auto out = json::object();
 			Mutex::Lock l(_nets_m);
@@ -2141,8 +2247,9 @@ public:
             out["versionMinor"] = ZEROTIER_ONE_VERSION_MINOR;
             out["versionRev"] = ZEROTIER_ONE_VERSION_REVISION;
             out["versionBuild"] = ZEROTIER_ONE_VERSION_BUILD;
-            OSUtils::ztsnprintf(tmp,sizeof(tmp),"%d.%d.%d",ZEROTIER_ONE_VERSION_MAJOR,ZEROTIER_ONE_VERSION_MINOR,ZEROTIER_ONE_VERSION_REVISION);
-            out["version"] = tmp;
+						OSUtils::ztsnprintf(tmp,sizeof(tmp),"%d.%d.%d Covisian %s",ZEROTIER_ONE_VERSION_MAJOR,ZEROTIER_ONE_VERSION_MINOR,ZEROTIER_ONE_VERSION_REVISION,COVISIAN_VERSION_STRING);
+						out["version"] = tmp;
+						out["customVersion"] = COVISIAN_VERSION_STRING;
             out["clock"] = OSUtils::now();
 
             {

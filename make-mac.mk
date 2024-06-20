@@ -42,6 +42,16 @@ ifeq ($(ZT_OFFICIAL_RELEASE),1)
 	NOTARIZE=xcrun notarytool
 	NOTARIZE_APPLE_ID="adam.ierymenko@gmail.com"
 	NOTARIZE_TEAM_ID="8ZD9JUCZ4V"
+else ifeq ($(ZT_COVISIAN_RELEASE),1)
+	DEFS+=-DZT_SOFTWARE_UPDATE_DEFAULT="\"disable\""
+	ZT_USE_MINIUPNPC=1
+	CODESIGN=codesign
+	PRODUCTSIGN=productsign
+	CODESIGN_APP_CERT="Developer ID Application: COVISIAN SPA (XYH8CWQUB3)"
+	CODESIGN_INSTALLER_CERT="Developer ID Installer: COVISIAN SPA (XYH8CWQUB3)"
+	NOTARIZE=xcrun notarytool
+	NOTARIZE_APPLE_ID="apple.developer@covisian.com"
+	NOTARIZE_TEAM_ID="XYH8CWQUB3"
 else
 	DEFS+=-DZT_SOFTWARE_UPDATE_DEFAULT="\"download\""
 endif
@@ -168,7 +178,7 @@ mac-dist-pkg: FORCE
 	if [ -f "ZeroTier One Signed.pkg" ]; then mv -f "ZeroTier One Signed.pkg" "ZeroTier One.pkg"; fi
 	rm -f zt1_update_$(ZT_BUILD_PLATFORM)_$(ZT_BUILD_ARCHITECTURE)_*
 	cat ext/installfiles/mac-update/updater.tmpl.sh "ZeroTier One.pkg" >zt1_update_$(ZT_BUILD_PLATFORM)_$(ZT_BUILD_ARCHITECTURE)_$(ZT_VERSION_MAJOR).$(ZT_VERSION_MINOR).$(ZT_VERSION_REV)_$(ZT_VERSION_BUILD).exe
-	$(NOTARIZE) submit --apple-id "adam.ierymenko@gmail.com" --team-id "8ZD9JUCZ4V" --wait "ZeroTier One.pkg"
+	$(NOTARIZE) submit --apple-id $(NOTARIZE_APPLE_ID) --team-id $(NOTARIZE_TEAM_ID) --wait "ZeroTier One.pkg"
 	echo '*** When Apple notifies that the app is notarized, run: xcrun stapler staple "ZeroTier One.pkg"'
 
 # For ZeroTier, Inc. to build official signed packages
@@ -177,6 +187,14 @@ official: FORCE
 	make clean
 	make ZT_OFFICIAL_RELEASE=1 -j 8 one
 	make ZT_OFFICIAL_RELEASE=1 mac-dist-pkg
+
+# For Covisian S.p.A. to build official signed packages
+covisian: FORCE
+	cd ../DesktopUI ; make ZT_COVISIAN_RELEASE=1
+	make clean
+	make ZT_COVISIAN_RELEASE=1 -j 8 one
+	make ZT_COVISIAN_RELEASE=1 mac-dist-pkg
+	mv "ZeroTier One.pkg" "ZeroTier One Covisian.pkg"
 
 _buildx:
 	@echo "docker buildx create"
