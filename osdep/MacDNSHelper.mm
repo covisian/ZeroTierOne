@@ -3,12 +3,31 @@
 #include <stdio.h>
 
 #include <SystemConfiguration/SystemConfiguration.h>
+#include "./OSUtils.hpp"
+
 
 namespace ZeroTier {
 
 static void printKeys (const void* key, const void* value, void* context) {
   CFShow(key);
   CFShow(value);
+}
+
+static CFArrayRef getDomainArray(const char *domain) {
+    // Split the domain string into individual domains
+    std::vector<std::string> domainList(OSUtils::split(domain,",","",""));
+    
+    // Create a CFArrayRef containing each domain
+    CFStringRef* cfdomainArray = new CFStringRef[domainList.size()];
+    for (unsigned int i = 0; i < domainList.size(); ++i) {
+        cfdomainArray[i] = CFStringCreateWithCString(NULL, domainList[i].c_str(), kCFStringEncodingUTF8);
+    }
+    CFArrayRef domainArray = CFArrayCreate(NULL, (const void**)cfdomainArray, domainList.size(), &kCFTypeArrayCallBacks);
+    
+    // Clean up memory
+    delete[] cfdomainArray;
+    
+    return domainArray;
 }
 
 void MacDNSHelper::setDNS(uint64_t nwid, const char *domain, const std::vector<InetAddress> &servers)
@@ -30,11 +49,9 @@ void MacDNSHelper::setDNS(uint64_t nwid, const char *domain, const std::vector<I
     keys[1] = CFSTR("ServerAddresses");
     keys[2] = CFSTR("SearchDomains");
 
-    CFStringRef cfdomain = CFStringCreateWithCString(NULL, domain, kCFStringEncodingUTF8);
-    CFStringRef cfdomain2 = CFStringCreateWithCString(NULL, domain, kCFStringEncodingUTF8);
-    CFArrayRef domainArray = CFArrayCreate(NULL, (const void**)&cfdomain, 1, &kCFTypeArrayCallBacks);
-    CFArrayRef domainArray2 = CFArrayCreate(NULL, (const void**)&cfdomain2, 1, &kCFTypeArrayCallBacks);
-
+    CFArrayRef domainArray = getDomainArray(domain);
+    CFArrayRef domainArray2 = getDomainArray(domain);
+            
     CFTypeRef values[3];
     values[0] = domainArray;
     values[1] = serverArray;
@@ -74,8 +91,6 @@ void MacDNSHelper::setDNS(uint64_t nwid, const char *domain, const std::vector<I
     CFRelease(dict);
     CFRelease(domainArray);
     CFRelease(domainArray2);
-    CFRelease(cfdomain);
-    CFRelease(cfdomain2);
     CFRelease(serverArray);
     for (int i = 0; i < servers.size(); ++i) {
         CFRelease(s[i]);

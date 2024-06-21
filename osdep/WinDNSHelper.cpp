@@ -8,6 +8,8 @@
 #include <sstream>
 #include <strsafe.h>
 
+#include "./OSUtils.hpp"
+
 #define MAX_KEY_LENGTH 255
 #define MAX_VALUE_NAME 16383
 
@@ -334,8 +336,14 @@ void WinDNSHelper::setDNS(uint64_t nwid, const char* domain, const std::vector<I
 			RegSetKeyValueA(dnsKey, NULL, "DisplayName", REG_SZ, "", 0);
 			RegSetKeyValueA(dnsKey, NULL, "GenericDNSServers", REG_SZ, serverValue.data(), serverValue.length());
 			RegSetKeyValueA(dnsKey, NULL, "IPSECCARestriction", REG_SZ, "", 0);
-			std::string d = "." + std::string(domain);
-			RegSetKeyValueA(dnsKey, NULL, "Name", REG_MULTI_SZ, d.data(), d.length());
+			std::vector<std::string> domainList(OSUtils::split(domain, ",", "", ""));
+			std::vector<char> buffer;
+			for (const auto& d : domainList) {
+				buffer.insert(buffer.end(), d.begin(), d.end());
+				buffer.push_back('\0');
+			}
+			buffer.push_back('\0');
+			RegSetKeyValueA(dnsKey, NULL, "Name", REG_MULTI_SZ, buffer.data(), buffer.size());
 			DWORD version = 2;
 			RegSetKeyValueA(dnsKey, NULL, "Version", REG_DWORD, &version, sizeof(DWORD));
 		}
