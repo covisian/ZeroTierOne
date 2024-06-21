@@ -1599,13 +1599,15 @@ public:
 		}
 	}
 
-	virtual std::vector<uint64_t> extractAllowedNetworks(const httplib::Request& req) {
-		std::vector<uint64_t> allowedNetworks;
-		if (req.has_header("x-zt1-signature")) {
+	virtual bool isNetworkAllowed(const httplib::Request& req, uint64_t nwid) {
+		if (!req.has_header("x-zt1-signature")) {
+			return true;
+		} else {
+			std::vector<uint64_t> allowedNetworks;
 			std::string signature = req.get_header_value("x-zt1-signature");
 			std::vector<std::string> parts(OSUtils::split(signature.c_str(),":","",""));
 
-			if (parts.size() == 3 && parts[2].size() == ZT_C25519_SIGNATURE_LEN * 2) {
+			if (parts.size() == 3) {
 				std::vector<std::string> nwParts(OSUtils::split(parts[1].c_str(),",","",""));
 				if (nwParts.size() > 0) {
 					fprintf(stderr,"DEBUG: allowed networks (%d): " ZT_EOL_S, nwParts.size());
@@ -1614,17 +1616,7 @@ public:
 						allowedNetworks.push_back(Utils::hexStrToU64(tsPart->c_str()));
 					}
 				}
-
 			}
-		}
-		return allowedNetworks;
-	}
-	
-	virtual bool isNetworkAllowed(const httplib::Request& req, uint64_t nwid) {
-		if (!req.has_header("x-zt1-signature")) {
-			return true;
-		} else {
-			std::vector<uint64_t> allowedNetworks = extractAllowedNetworks(req);
 			return std::find(allowedNetworks.begin(), allowedNetworks.end(), nwid) != allowedNetworks.end();
 		}
 	}
