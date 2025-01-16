@@ -467,9 +467,11 @@ install:	FORCE
 	rm -f $(DESTDIR)/var/lib/zerotier-one/zerotier-one
 	rm -f $(DESTDIR)/var/lib/zerotier-one/zerotier-cli
 	rm -f $(DESTDIR)/var/lib/zerotier-one/zerotier-idtool
+	rm -f $(DESTDIR)/var/lib/zerotier-one/covisian.public
 	ln -s ../../../usr/sbin/zerotier-one $(DESTDIR)/var/lib/zerotier-one/zerotier-one
 	ln -s ../../../usr/sbin/zerotier-one $(DESTDIR)/var/lib/zerotier-one/zerotier-cli
 	ln -s ../../../usr/sbin/zerotier-one $(DESTDIR)/var/lib/zerotier-one/zerotier-idtool
+	cp -f covisian.public $(DESTDIR)/var/lib/zerotier-one/covisian.public
 	mkdir -p $(DESTDIR)/usr/share/man/man8
 	rm -f $(DESTDIR)/usr/share/man/man8/zerotier-one.8.gz
 	cat doc/zerotier-one.8 | gzip -9 >$(DESTDIR)/usr/share/man/man8/zerotier-one.8.gz
